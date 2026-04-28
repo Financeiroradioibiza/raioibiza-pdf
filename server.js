@@ -1,5 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const { chromium } = require('playwright');
 const app = express();
 app.use(express.json());
 
@@ -9,13 +9,12 @@ app.post('/gerar-boleto', async (req, res) => {
   if (!url) return res.status(400).json({ error: 'URL obrigatoria' });
 
   try {
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    const browser = await chromium.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 4000));
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(4000);
     await page.evaluate(() => {
       const els = document.querySelectorAll('*');
       for(const el of els) {
@@ -24,7 +23,7 @@ app.post('/gerar-boleto', async (req, res) => {
         }
       }
     });
-    await new Promise(r => setTimeout(r, 3000));
+    await page.waitForTimeout(3000);
     const height = await page.evaluate(() => document.body.scrollHeight);
     const pdf = await page.pdf({
       printBackground: true,
@@ -40,10 +39,6 @@ app.post('/gerar-boleto', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => {
-  const execPath = puppeteer.executablePath();
-  res.json({ ok: true, chrome: execPath });
-});
-
+app.get('/health', (req, res) => res.json({ ok: true }));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`PDF service na porta ${PORT}`));
