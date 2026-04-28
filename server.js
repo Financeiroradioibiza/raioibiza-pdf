@@ -11,7 +11,7 @@ app.post('/gerar-boleto', async (req, res) => {
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -41,4 +41,6 @@ app.post('/gerar-boleto', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));
-app.listen(process.env.PORT || 3000, () => console.log('PDF service rodando!'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`PDF service rodando na porta ${PORT}!`));
