@@ -1,5 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const app = express();
 app.use(express.json());
 
@@ -10,7 +10,6 @@ app.post('/gerar-boleto', async (req, res) => {
 
   try {
     const browser = await puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
@@ -41,6 +40,10 @@ app.post('/gerar-boleto', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => {
+  const execPath = puppeteer.executablePath();
+  res.json({ ok: true, chrome: execPath });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`PDF service na porta ${PORT}`));
