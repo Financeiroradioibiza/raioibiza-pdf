@@ -10,8 +10,9 @@ app.post('/gerar-boleto', async (req, res) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      headless: 'new',
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -35,12 +36,11 @@ app.post('/gerar-boleto', async (req, res) => {
     res.set('Content-Type', 'application/pdf');
     res.send(pdf);
   } catch(e) {
-    console.error('Erro PDF:', e);
+    console.error('Erro PDF:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`PDF service rodando na porta ${PORT}!`));
+app.listen(PORT, '0.0.0.0', () => console.log(`PDF service na porta ${PORT}`));
