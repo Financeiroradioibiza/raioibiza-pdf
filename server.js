@@ -4,36 +4,54 @@ const app = express();
 app.use(express.json());
 app.use((req,res,next)=>{res.set("Access-Control-Allow-Origin","*");res.set("Access-Control-Allow-Methods","GET,POST,OPTIONS");res.set("Access-Control-Allow-Headers","Content-Type");if(req.method==="OPTIONS")return res.sendStatus(200);next();});
 
-// Função que abre a página do boleto com retries contra "Não foi possível obter os dados"
 async function abrirPagBoleto(url) {
   const browser = await chromium.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-site-isolation-trials'
+    ]
   });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 1600 }
+    viewport: { width: 1280, height: 1600 },
+    locale: 'pt-BR',
+    timezoneId: 'America/Sao_Paulo',
+    extraHTTPHeaders: {
+      'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8'
+    }
   });
+
+  // Script stealth
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR','pt','en'] });
+    window.chrome = { runtime: {} };
+  });
+
   const page = await context.newPage();
 
-  let tentativasErro = 0;
-  const MAX_TENTATIVAS = 4;
-
-  while (tentativasErro < MAX_TENTATIVAS) {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
-    await page.waitForTimeout(5000);
-
-    const temErro = await page.evaluate(() => {
-      return document.body.innerText.includes('Não foi possível obter os dados');
-    });
-
+  let tentativas = 0;
+  while (tentativas < 5) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    } catch(e) {
+      console.log('Erro goto:', e.message);
+    }
+    // Espera dinamica
+    await page.waitForTimeout(6000);
+    const temErro = await page.evaluate(() => document.body.innerText.includes('Não foi possível'));
     if (!temErro) break;
-
-    tentativasErro++;
-    console.log(`Tentativa ${tentativasErro}: erro de obter dados, retentando...`);
-    await page.waitForTimeout(3000);
+    tentativas++;
+    console.log('Retry', tentativas);
+    await page.waitForTimeout(5000);
   }
 
-  // Clica na aba Boleto bancário
   await page.evaluate(() => {
     const els = document.querySelectorAll('*');
     for(const el of els) {
@@ -50,56 +68,40 @@ app.post('/extrair-boleto', async (req, res) => {
   const { url, token } = req.body;
   if (token !== process.env.PDF_SECRET) return res.status(401).json({ error: 'Nao autorizado' });
   if (!url) return res.status(400).json({ error: 'URL obrigatoria' });
-
   try {
     const { browser, page } = await abrirPagBoleto(url);
     const dados = await page.evaluate(() => {
       const texto = document.body.innerText;
       const linhas = texto.split('\n').map(l => l.trim()).filter(Boolean);
       const codigoBarras = linhas.find(l => /^\d{47,48}$/.test(l.replace(/\s/g,''))) || '';
-      const nossoNumIdx = linhas.findIndex(l => l.toLowerCase().includes('nosso número') || l.toLowerCase().includes('nosso numero'));
-      const nossoNum = nossoNumIdx >= 0 ? linhas[nossoNumIdx + 1] : '';
-      const vencIdx = linhas.findIndex(l => l.toLowerCase().includes('vencimento'));
-      const vencimento = vencIdx >= 0 ? linhas[vencIdx + 1] : '';
-      const valorIdx = linhas.findIndex(l => l.toLowerCase().includes('valor do doc'));
-      const valor = valorIdx >= 0 ? linhas[valorIdx + 1] : '';
-      return { codigoBarras: codigoBarras.replace(/\s/g,''), nossoNum, vencimento, valor, linhas: linhas.slice(0,50) };
+      return { linhas: linhas.slice(0,20), codigoBarras };
     });
     await browser.close();
     return res.status(200).json({ ok: true, ...dados });
-  } catch(e) {
-    console.error('Erro extrair:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/gerar-boleto', async (req, res) => {
   const { url, token } = req.body;
   if (token !== process.env.PDF_SECRET) return res.status(401).json({ error: 'Nao autorizado' });
   if (!url) return res.status(400).json({ error: 'URL obrigatoria' });
-
   try {
     const { browser, page } = await abrirPagBoleto(url);
-    // Confere se tem o boleto renderizado antes de gerar PDF
     const temBoleto = await page.evaluate(() => {
       const txt = document.body.innerText;
-      return !txt.includes('Não foi possível obter os dados') && txt.length > 500;
+      return !txt.includes('Não foi possível') && txt.length > 500;
     });
     if (!temBoleto) {
       await browser.close();
-      return res.status(502).json({ error: 'IUGU nao renderizou boleto' });
+      return res.status(502).json({ error: 'IUGU bloqueou' });
     }
     const pdf = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
     res.set('Content-Type', 'application/pdf');
     res.send(pdf);
-  } catch(e) {
-    console.error('Erro gerar:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Server on', PORT));
